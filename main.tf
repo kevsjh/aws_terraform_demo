@@ -8,20 +8,27 @@ terraform {
 
   required_version = ">= 0.14.9"
 }
-# set default region
+
+# set region
 provider "aws" {
   profile = "default"
-  region  = "us-east-1"
+  region  = "ap-southeast-1"
 }
-# nat gateway eip
 
+# create vpc
+  # cidr block
+  # subnet for private and public
+  # igw
+  # nat gw
+  # enable dns by default
+  # route table creates automatically for private n public with nat +igw
 module "vpc" {
   source = "terraform-aws-modules/vpc/aws"
 
   name = "demo"
   cidr = "10.0.0.0/16"
 
-  azs             = ["us-east-1a", "us-east-1b", "us-east-1c"]
+  azs             = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
   private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
   public_subnets  = ["10.0.4.0/24", "10.0.5.0/24", "10.0.6.0/24"]
 
@@ -38,6 +45,8 @@ module "vpc" {
   }
 }
 
+# SG
+  # only open ssh and http
 module "security_group" {
   source  = "terraform-aws-modules/security-group/aws"
   version = "~> 4.0"
@@ -63,8 +72,6 @@ module "security_group" {
     project = "terra_demo"
   }
 }
-
-
 
 resource "tls_private_key" "ec2_key" {
   algorithm = "RSA"
@@ -107,6 +114,50 @@ data "aws_ami" "ubuntu" {
   owners = ["099720109477"] # Canonical
 }
 
+locals {
+  cloud_init_files = <<-END
+  
+    ${jsonencode({
+      write_files = [
+        {
+          path        = "/home/ubuntu/docker-compose.yml"
+          permissions = "0644"
+          owner       = "ubuntu:ubuntu"
+          encoding    = "b64"
+          content     = filebase64("${path.module}/docker-compose.yml")
+        },
+
+      ]
+    })}
+  END
+}
+
+data "cloudinit_config" "initdocker" {
+  gzip          = false
+  base64_encode = false
+  # cp docker compose and index.html file to ec2
+  part {
+    content_type = "text/cloud-config"
+    filename     = "docker-compose.yml"
+    content      = local.cloud_init_files
+  }
+
+
+  part { 
+    content_type = "text/x-shellscript"
+    content      = <<-EOF
+      #!/bin/bash
+      sudo apt-get update
+      sudo apt-get install -y docker.io docker-compose
+      cd /home/ubuntu
+      mkdir src
+      echo -e '<h1>Welcome to nginx!</h1><p >My name is <span style="color: #ffc400">Kevin Sham</span></p>' > src/index.html
+      sudo docker-compose up --detach
+    EOF 
+  }   
+}
+
+
 module "ec2" {
   source                 = "terraform-aws-modules/ec2-instance/aws"
   version                = "~> 2.0"
@@ -119,20 +170,16 @@ module "ec2" {
   # subnet_id              = module.vpc.private_subnets
   subnet_id = tolist(module.vpc.private_subnets)[0]
 
-    user_data = <<-EOF
-    #!/bin/bash
-    sudo apt-get update
-    sudo apt install docker.io
-    sudo systemctl start docker
-    sudo systemctl enable docker
- 
-  EOF
-
+  user_data = data.cloudinit_config.initdocker.rendered
+  
   tags = {
     Name    = "demo_ec2"
     project = "terra_demo"
   }
+  depends_on=[module.vpc] #await vpc module creation complete; cloudinit conn depends on nat gw
 }
+
+
 
 
 module "nlb" {
@@ -191,3 +238,5 @@ resource "aws_lb_target_group_attachment" "ssh" {
   target_id        = tolist(module.ec2.id)[0] 
   port             = 22
 }
+
+
