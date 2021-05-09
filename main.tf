@@ -12,7 +12,7 @@ terraform {
 # set region
 provider "aws" {
   profile = "default"
-  region  = "ap-southeast-1"
+  region  = var.region
 }
 
 # create vpc
@@ -25,10 +25,10 @@ provider "aws" {
 module "vpc" {
   source = "terraform-aws-modules/vpc/aws"
 
-  name = "demo"
+  name = var.vpc_name
   cidr = "10.0.0.0/16"
 
-  azs             = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
+  azs             = ["${var.region}a", "${var.region}b", "${var.region}c"]
   private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
   public_subnets  = ["10.0.4.0/24", "10.0.5.0/24", "10.0.6.0/24"]
 
@@ -59,11 +59,11 @@ module "security_group" {
   ingress_with_cidr_blocks = [
     {
       rule        = "ssh-tcp"
-      cidr_blocks = "0.0.0.0/0"
+      cidr_blocks = var.ssh_allowed_cidr
     },
     {
       rule        = "http-80-tcp"
-      cidr_blocks = "118.189.0.0/16,116.206.0.0/16,223.25.0.0/16"
+      cidr_blocks = var.http_allowed_cidr
     },
   ]
   egress_rules = ["all-all"]
@@ -132,7 +132,7 @@ locals {
 })}
   END
 }
-
+# cloudinit for ec2
 data "cloudinit_config" "initdocker" {
   gzip          = false
   base64_encode = false
@@ -152,7 +152,7 @@ data "cloudinit_config" "initdocker" {
       sudo apt-get install -y docker.io docker-compose
       cd /home/ubuntu
       mkdir src
-      echo -e '<h1>Welcome to nginx!</h1><p >My name is <span style="color: #ffc400">Kevin Sham</span></p>' > src/index.html
+      echo -e '<h1>Welcome to nginx!</h1><p >My name is <span style="color: #ffc400">${var.nginx_name}</span></p>' > src/index.html
       sudo docker-compose up --detach
     EOF 
   }
@@ -244,7 +244,7 @@ resource "aws_lb_target_group_attachment" "ssh" {
 
 module "iam_user" {
   source        = "terraform-aws-modules/iam/aws//modules/iam-user"
-  name          = "demo_tester"
+  name          = var.iam_username
   force_destroy = true
 
   pgp_key                 = "keybase:demo_tester"
