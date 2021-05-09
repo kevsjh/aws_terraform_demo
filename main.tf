@@ -16,12 +16,12 @@ provider "aws" {
 }
 
 # create vpc
-  # cidr block
-  # subnet for private and public
-  # igw
-  # nat gw
-  # enable dns by default
-  # route table creates automatically for private n public with nat +igw
+# cidr block
+# subnet for private and public
+# igw
+# nat gw
+# enable dns by default
+# route table creates automatically for private n public with nat +igw
 module "vpc" {
   source = "terraform-aws-modules/vpc/aws"
 
@@ -46,7 +46,7 @@ module "vpc" {
 }
 
 # SG
-  # only open ssh and http
+# only open ssh and http
 module "security_group" {
   source  = "terraform-aws-modules/security-group/aws"
   version = "~> 4.0"
@@ -73,12 +73,13 @@ module "security_group" {
   }
 }
 
+# create ec2 key and store to local machine
 resource "tls_private_key" "ec2_key" {
   algorithm = "RSA"
   rsa_bits  = 4096
 
 }
-# store the generate ec2 key on local machine
+
 resource "null_resource" "get_keys" {
 
   provisioner "local-exec" {
@@ -116,19 +117,19 @@ data "aws_ami" "ubuntu" {
 
 locals {
   cloud_init_files = <<-END
-  
-    ${jsonencode({
-      write_files = [
-        {
-          path        = "/home/ubuntu/docker-compose.yml"
-          permissions = "0644"
-          owner       = "ubuntu:ubuntu"
-          encoding    = "b64"
-          content     = filebase64("${path.module}/docker-compose.yml")
-        },
 
-      ]
-    })}
+    ${jsonencode({
+  write_files = [
+    {
+      path        = "/home/ubuntu/docker-compose.yml"
+      permissions = "0644"
+      owner       = "ubuntu:ubuntu"
+      encoding    = "b64"
+      content     = filebase64("${path.module}/docker-compose.yml")
+    },
+
+  ]
+})}
   END
 }
 
@@ -143,7 +144,7 @@ data "cloudinit_config" "initdocker" {
   }
 
 
-  part { 
+  part {
     content_type = "text/x-shellscript"
     content      = <<-EOF
       #!/bin/bash
@@ -154,7 +155,7 @@ data "cloudinit_config" "initdocker" {
       echo -e '<h1>Welcome to nginx!</h1><p >My name is <span style="color: #ffc400">Kevin Sham</span></p>' > src/index.html
       sudo docker-compose up --detach
     EOF 
-  }   
+  }
 }
 
 
@@ -171,12 +172,12 @@ module "ec2" {
   subnet_id = tolist(module.vpc.private_subnets)[0]
 
   user_data = data.cloudinit_config.initdocker.rendered
-  
+
   tags = {
     Name    = "demo_ec2"
     project = "terra_demo"
   }
-  depends_on=[module.vpc] #await vpc module creation complete; cloudinit conn depends on nat gw
+  depends_on = [module.vpc] #await vpc module creation complete; cloudinit conn depends on nat gw
 }
 
 
@@ -190,8 +191,8 @@ module "nlb" {
 
   load_balancer_type = "network"
 
-  vpc_id          = module.vpc.vpc_id
-  subnets         = module.vpc.public_subnets
+  vpc_id  = module.vpc.vpc_id
+  subnets = module.vpc.public_subnets
   # security_groups = [module.security_group.security_group_id]
 
   target_groups = [
@@ -230,13 +231,31 @@ module "nlb" {
 
 resource "aws_lb_target_group_attachment" "http" {
   target_group_arn = tolist(module.nlb.target_group_arns)[0]
-  target_id        = tolist(module.ec2.id)[0] 
+  target_id        = tolist(module.ec2.id)[0]
   port             = 80
 }
 resource "aws_lb_target_group_attachment" "ssh" {
   target_group_arn = tolist(module.nlb.target_group_arns)[1]
-  target_id        = tolist(module.ec2.id)[0] 
+  target_id        = tolist(module.ec2.id)[0]
   port             = 22
 }
 
 
+
+module "iam_user" {
+  source        = "terraform-aws-modules/iam/aws//modules/iam-user"
+  name          = "demo_tester"
+  force_destroy = true
+
+  pgp_key                 = "keybase:demo_tester"
+  password_reset_required = false
+}
+
+# create readonly group  & add user to group
+module "iam_group_with_policies" {
+  source                            = "terraform-aws-modules/iam/aws//modules/iam-group-with-policies"
+  name                              = "demo_readonly"
+  group_users                       = [module.iam_user.iam_user_name]
+  attach_iam_self_management_policy = true
+  custom_group_policy_arns          = ["arn:aws:iam::aws:policy/ReadOnlyAccess"]
+}
